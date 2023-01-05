@@ -1,3 +1,8 @@
+# Generation OpenApi Backend:
+* `openapi-spec-validator --schema 3.0.0 dooropen.yaml`
+* `openapi-generator-cli generate -i dooropen.yaml -g rust-server`
+
+
 # Rust API for openapi_client
 
 This API provides status infos for door system

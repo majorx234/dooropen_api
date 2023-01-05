@@ -1,0 +1,110 @@
+openapi: 3.0.0
+info:
+  description: This API provides status infos for door system
+  version: "1.0"
+  title: Ilmspace door API  
+  contact:
+    name: MajorX234
+    email: majorx234@googlemail.com
+tags:
+  - name: test
+    description: Test the service
+  - name: door_info
+    description: door info methods
+paths:
+  /ping:
+    get:
+      tags:
+        - test
+      summary: Ping the REST API
+      operationId: ping
+      responses:
+        "200":
+          description: Success
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Status"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+  /DoorInfo:
+    get:
+      tags:
+        - door_info
+      summary: Send a control command to the crayler agv
+      description: Send a control command to agv
+      responses:
+        "200":
+          description: Success
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DoorStatus"
+        "403":
+          $ref: "#/components/responses/Forbidden"                
+servers:
+  - url: http://to.be.defined/v1.0
+components:
+  responses:
+    Forbidden:
+      description: The HTTP 403 Forbidden client error status response code indicates
+        that the server understood the request but refuses to authorize it.
+      content:
+        "*/*":
+          schema:
+            $ref: "#/components/schemas/ErrorResponse"
+    NotFound:
+      description: The requested resource was not found
+      content:
+        "*/*":
+          schema:
+            $ref: "#/components/schemas/ErrorResponse"
+    InvalidInput:
+      description: Content provided for this request was invalid
+      content:
+        "*/*":
+          schema:
+            $ref: "#/components/schemas/ErrorResponse"
+  schemas:
+    ErrorResponse:
+      type: object
+      properties:
+        message:
+          type: string
+      required:
+        - message
+    Status:
+      type: object
+      properties:
+        message:
+          type: string
+      required:
+        - message
+    DoorStatus:
+      type: object
+      properties:
+        header:
+          $ref: "#/components/schemas/Header"
+        lock_status:
+          type: boolean
+          description: false=off, true=on
+    Header:
+      type: object
+      properties:
+        seq:
+          type: integer
+          format: int64
+          description: Sequenz number
+        stamp:
+          $ref: "#/components/schemas/Time"
+    Time:
+      type: object
+      properties:
+        sec:
+          type: integer
+          format: int64
+          description: seconds
+        nsec:
+          type: integer
+          format: int64
+          description: nano seconds          
