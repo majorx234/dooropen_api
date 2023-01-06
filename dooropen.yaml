@@ -1,6 +1,6 @@
 openapi: 3.0.0
 info:
-  description: This API provides status infos for door system
+  description: This API provides status infos for door systems
   version: "1.0"
   title: Ilmspace door API  
   contact:
@@ -27,12 +27,13 @@ paths:
                 $ref: "#/components/schemas/Status"
         "403":
           $ref: "#/components/responses/Forbidden"
-  /DoorInfo:
+  /door_status:
     get:
       tags:
         - door_info
-      summary: Send a control command to the crayler agv
-      description: Send a control command to agv
+      summary: Get status of the door 
+      description: query whether the door is open or closed
+      operationId: door_status
       responses:
         "200":
           description: Success

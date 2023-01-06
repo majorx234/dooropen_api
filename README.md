@@ -5,7 +5,7 @@
 
 # Rust API for openapi_client
 
-This API provides status infos for door system
+This API provides status infos for door systems
 
 ## Overview
 
@@ -19,7 +19,7 @@ To see how to make this your own, look here:
 [README]((https://openapi-generator.tech))
 
 - API version: 1.0
-- Build date: 2023-01-05T21:11:29.141560525+01:00[Europe/Berlin]
+- Build date: 2023-01-06T01:59:01.134114899+01:00[Europe/Berlin]
 
 
 
@@ -66,7 +66,7 @@ cargo run --example server
 To run a client, follow one of the following simple steps:
 
 ```
-cargo run --example client DoorInfoGet
+cargo run --example client DoorStatus
 cargo run --example client Ping
 ```
 
@@ -101,7 +101,7 @@ All URIs are relative to *http://to.be.defined/v1.0*
 
 Method | HTTP request | Description
 ------------- | ------------- | -------------
-[****](docs/door_info_api.md#) | **GET** /DoorInfo | Send a control command to the crayler agv
+[**door_status**](docs/door_info_api.md#door_status) | **GET** /door_status | Get status of the door
 [**ping**](docs/test_api.md#ping) | **GET** /ping | Ping the REST API
 
 
