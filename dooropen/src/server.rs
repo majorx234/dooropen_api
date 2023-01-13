@@ -1,7 +1,3 @@
-//! Main library entry point for openapi_client implementation.
-
-#![allow(unused_imports)]
-
 use async_trait::async_trait;
 use futures::{future, Stream, StreamExt, TryFutureExt, TryStreamExt};
 use hyper::server::conn::Http;
@@ -16,11 +12,14 @@ use swagger::{Has, XSpanIdString};
 use swagger::auth::MakeAllowAllAuthenticator;
 use swagger::EmptyContext;
 use tokio::net::TcpListener;
+use openssl::ssl::SslStream;
+use crate::server::PingResponse::Success;
+use dooropen_api::models::Status;
 
 #[cfg(not(any(target_os = "macos", target_os = "windows", target_os = "ios")))]
 use openssl::ssl::{Ssl, SslAcceptor, SslAcceptorBuilder, SslFiletype, SslMethod};
 
-use openapi_client::models;
+use dooropen_api::models;
 
 /// Builds an SSL implementation for Simple HTTPS from some hard-coded file names
 pub async fn create(addr: &str, https: bool) {
@@ -34,7 +33,7 @@ pub async fn create(addr: &str, https: bool) {
 
     #[allow(unused_mut)]
     let mut service =
-        openapi_client::server::context::MakeAddContext::<_, EmptyContext>::new(
+        dooropen_api::server::context::MakeAddContext::<_, EmptyContext>::new(
             service
         );
 
@@ -92,12 +91,12 @@ impl<C> Server<C> {
 }
 
 
-use openapi_client::{
+use dooropen_api::{
     Api,
     DoorStatusResponse,
     PingResponse,
 };
-use openapi_client::server::MakeService;
+use dooropen_api::server::MakeService;
 use std::error::Error;
 use swagger::ApiError;
 
@@ -120,8 +119,10 @@ impl<C> Api<C> for Server<C> where C: Has<XSpanIdString> + Send + Sync
         context: &C) -> Result<PingResponse, ApiError>
     {
         let context = context.clone();
+				println!("pinged");
         info!("ping() - X-Span-ID: {:?}", context.get().0.clone());
-        Err(ApiError("Generic failure".into()))
+        //Err(ApiError("Generic failure".into()))
+				Ok(PingResponse::Success(Status{message:"all ok".to_string(),}))
     }
 
 }

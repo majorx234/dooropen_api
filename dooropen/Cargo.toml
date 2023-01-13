@@ -1,0 +1,39 @@
+[package]
+authors = ["majorx234@googlemail.com"]
+edition = "2021"
+name = "dooropen"
+description = "open door main app"
+version = "0.1.0"
+
+[lib]
+name = "dooropen_lib"
+path = "src/lib.rs"
+
+[[bin]]
+name = "dooropen"
+path = "src/main.rs"
+
+[dependencies]
+dooropen_api = { path = "../dooropen_api" }
+async-trait = "0.1.24"
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+hyper = {version = "0.14", features = ["full"]}
+hyper-openssl = { version = "0.9"}
+# Crates included if required by the API definition
+
+# Common between server and client features
+
+serde_ignored = {version = "0.1.1", optional = true}
+url = {version = "2.1", optional = true}
+futures = "0.3"
+swagger = { version = "6.1", features = ["serdejson", "server", "client", "tls", "tcp"] }
+log = "0.4.0"
+mime = "0.3"
+
+tokio = { version = "1.14", features = ["full"] }
+tokio-openssl = {version = "0.6"}
+native-tls = "0.2"
+openssl = "0.10"
+clap = "2.25"
+env_logger = "0.7"
