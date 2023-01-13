@@ -119,10 +119,10 @@ impl<C> Api<C> for Server<C> where C: Has<XSpanIdString> + Send + Sync
         context: &C) -> Result<PingResponse, ApiError>
     {
         let context = context.clone();
-				println!("pinged");
+        println!("pinged");
         info!("ping() - X-Span-ID: {:?}", context.get().0.clone());
         //Err(ApiError("Generic failure".into()))
-				Ok(PingResponse::Success(Status{message:"all ok".to_string(),}))
+        Ok(PingResponse::Success(Status{message:"all ok".to_string(),}))
     }
 
 }
