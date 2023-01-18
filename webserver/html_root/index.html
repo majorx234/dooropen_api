@@ -1,0 +1,35 @@
+<!DOCTYPE html>
+<html>
+  <head>
+    <meta charset="utf-8">
+    <title>dooropen</title>
+    <style>
+      html {
+          background-color: #000;
+      }
+      body {
+          font-family: "Lucida Console";
+          font-size: 13px;
+          color: #0f0;
+      }
+      #console {
+          overflow-y: scroll; 
+          height:150px;
+      }
+    </style>
+    <script src="jquery.min.js"></script>
+  </head>
+  <body>
+
+    <h1>dooropen test</h1>
+    <div id="server_connect">
+    <label>Server:</label>
+    <form>
+        <input type="text" name="server" value="" id="server_id">
+        <input type="button" value="connect" />
+    </form>
+    <input type="button" value="test" />
+    <div class="console" id="console"></div>
+    <script src="dooropen.js"></script>
+  </body>
+</html> 
