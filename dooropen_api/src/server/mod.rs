@@ -158,7 +158,6 @@ impl<T, C> hyper::service::Service<(Request<Body>, C)> for Service<T, C> where
                                             HeaderName::from_static("x-span-id"),
                                             HeaderValue::from_str((&context as &dyn Has<XSpanIdString>).get().0.clone().as_str())
                                                 .expect("Unable to create X-Span-ID header value"));
-                                response.headers_mut().insert(hyper::header::ACCESS_CONTROL_ALLOW_HEADERS,HeaderValue::from_static("*"));
                                 response.headers_mut().insert(hyper::header::ACCESS_CONTROL_ALLOW_ORIGIN,HeaderValue::from_static("*"));
                                         match result {
                                             Ok(rsp) => match rsp {
