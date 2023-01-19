@@ -2,6 +2,7 @@ use async_trait::async_trait;
 use futures::{future, Stream, StreamExt, TryFutureExt, TryStreamExt};
 use hyper::server::conn::Http;
 use hyper::service::Service;
+use hyper::header::{ACCESS_CONTROL_ALLOW_ORIGIN};
 use log::info;
 use std::future::Future;
 use std::marker::PhantomData;
@@ -14,7 +15,7 @@ use swagger::EmptyContext;
 use tokio::net::TcpListener;
 use openssl::ssl::SslStream;
 use crate::server::PingResponse::Success;
-use dooropen_api::models::Status;
+use dooropen_api::models::{DoorStatus,Status,Header,Time};
 
 #[cfg(not(any(target_os = "macos", target_os = "windows", target_os = "ios")))]
 use openssl::ssl::{Ssl, SslAcceptor, SslAcceptorBuilder, SslFiletype, SslMethod};
@@ -23,6 +24,7 @@ use dooropen_api::models;
 
 /// Builds an SSL implementation for Simple HTTPS from some hard-coded file names
 pub async fn create(addr: &str, https: bool) {
+
     let addr = addr.parse().expect("Failed to parse bind address");
 
     let server = Server::new();
@@ -110,7 +112,8 @@ impl<C> Api<C> for Server<C> where C: Has<XSpanIdString> + Send + Sync
     {
         let context = context.clone();
         info!("door_status() - X-Span-ID: {:?}", context.get().0.clone());
-        Err(ApiError("Generic failure".into()))
+        //Err(ApiError("Generic failure".into()))
+        Ok(DoorStatusResponse::Success(DoorStatus{lock_status:Some(true),header: Some(Header{seq:Some(1),stamp:Some(Time{sec:Some(6)  ,nsec:Some(1)}) })} ))
     }
 
     /// Ping the REST API

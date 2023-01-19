@@ -141,7 +141,13 @@ impl<T, C> hyper::service::Service<(Request<Body>, C)> for Service<T, C> where
         let path = paths::GLOBAL_REGEX_SET.matches(uri.path());
 
         match method {
-
+            hyper::Method::OPTIONS => {
+                                let mut response = Response::new(Body::empty());
+                                response.headers_mut().insert(hyper::header::ACCESS_CONTROL_ALLOW_HEADERS,HeaderValue::from_static("*"));
+                                response.headers_mut().insert(hyper::header::ACCESS_CONTROL_ALLOW_ORIGIN,HeaderValue::from_static("*"));
+                                *response.status_mut() = StatusCode::from_u16(200).expect("Unable to turn 200 into a StatusCode");
+                                Ok(response)
+            },
             // DoorStatus - GET /door_status
             hyper::Method::GET if path.matched(paths::ID_DOOR_STATUS) => {
                                 let result = api_impl.door_status(
@@ -152,7 +158,8 @@ impl<T, C> hyper::service::Service<(Request<Body>, C)> for Service<T, C> where
                                             HeaderName::from_static("x-span-id"),
                                             HeaderValue::from_str((&context as &dyn Has<XSpanIdString>).get().0.clone().as_str())
                                                 .expect("Unable to create X-Span-ID header value"));
-
+                                response.headers_mut().insert(hyper::header::ACCESS_CONTROL_ALLOW_HEADERS,HeaderValue::from_static("*"));
+                                response.headers_mut().insert(hyper::header::ACCESS_CONTROL_ALLOW_ORIGIN,HeaderValue::from_static("*"));
                                         match result {
                                             Ok(rsp) => match rsp {
                                                 DoorStatusResponse::Success
@@ -199,7 +206,7 @@ impl<T, C> hyper::service::Service<(Request<Body>, C)> for Service<T, C> where
                                             HeaderName::from_static("x-span-id"),
                                             HeaderValue::from_str((&context as &dyn Has<XSpanIdString>).get().0.clone().as_str())
                                                 .expect("Unable to create X-Span-ID header value"));
-
+                                response.headers_mut().insert(hyper::header::ACCESS_CONTROL_ALLOW_ORIGIN,HeaderValue::from_static("*"));
                                         match result {
                                             Ok(rsp) => match rsp {
                                                 PingResponse::Success
