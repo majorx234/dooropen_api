@@ -17,7 +17,7 @@
           height:150px;
       }
     </style>
-    <script src="jquery.min.js"></script>
+    <!-- script src="jquery.min.js"></script-->
   </head>
   <body>
 
@@ -25,10 +25,10 @@
     <div id="server_connect">
     <label>Server:</label>
     <form>
-        <input type="text" name="server" value="" id="server_id">
-        <input type="button" value="connect" />
+        <input type="text" name="server" value="" id="server_id" />
+        <input type="button" value="ping" id="server_ping" />
     </form>
-    <input type="button" value="test" />
+    <input type="button" value="door_status" id="server_door_status"/>
     <div class="console" id="console"></div>
     <script src="dooropen.js"></script>
   </body>
