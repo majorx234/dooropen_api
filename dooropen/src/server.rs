@@ -111,6 +111,15 @@ impl<C> Api<C> for Server<C> where C: Has<XSpanIdString> + Send + Sync
         let context = context.clone();
         info!("door_status() - X-Span-ID: {:?}", context.get().0.clone());
         Err(ApiError("Generic failure".into()))
+            /*
+        println!("New DoorStatus Request!");
+        Ok(DoorStatusResponse::Success(
+                models::DoorStatus {
+                    header: None,
+                    lock_status: Some(true),
+                },
+        ))
+             * */
     }
 
     /// Ping the REST API
