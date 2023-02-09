@@ -14,6 +14,7 @@ name = "dooropen"
 path = "src/main.rs"
 
 [dependencies]
+rppal = {version = "0.14.1"}
 dooropen_api = { path = "../dooropen_api" }
 async-trait = "0.1.24"
 serde = { version = "1.0", features = ["derive"] }
