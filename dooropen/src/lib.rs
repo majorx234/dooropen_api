@@ -2,7 +2,8 @@ use rppal::gpio::{InputPin, Trigger};
 use std::{
     collections::HashMap,
     sync::{
-        mpsc::{channel, sync_channel, Receiver, Sender, SyncSender, RecvError},
+        atomic::{AtomicBool, Ordering},
+        mpsc::{channel, Receiver, Sender},
         Arc, Mutex,
     },
     thread::{self, JoinHandle},
@@ -11,121 +12,122 @@ use std::{
 
 pub mod server;
 
-/// Trait for the pins needed by PinInterrupter to reigister functions
-pub trait InterruptablePin {
-    /// registers a function with a simple interrupt function on the pin if it gets a low
-    /// signal change
-    fn on_low_signal<F>(&mut self, interupt: Box<F>)
-    where
-        F: FnMut() + std::marker::Send;
-
-    /// registers a function with a simple interrupt function on the pin if it gets a high
-    /// signal change
-    fn on_high_signal<F>(&mut self, interupt: Box<F>)
-    where
-        F: FnMut() + std::marker::Send;
-
-    /// Returns the specific pin-id
-    fn get_id(&self) -> usize;
-}
-
-///Pin Interrupt struct for async communication with the pins
-// TODO: dictionary needs to be interrupt-save, thread-save and accessable
-// for the interrupt function  <22-01-23, Nikl> //
-struct PinInterrupter {
-    activated_pin_dict: Arc<Mutex<Vec<bool>>>,
-}
-
-impl PinInterrupter {
-    pub fn new(channel_buffer_size: usize) -> Self {
-        Self {
-            activated_pin_dict: Arc::new(Mutex::new(Vec::new())),
-        }
-    }
-    /// Registers the interups to the pins given in the InterruptablePin trait
-    /** Uses the functions on_low_signal and on_high_signal from InterruptablePin to register a
-     * specific behavior to the pin.
-     *
-     * On high the bool in the dictionary will be set(true) and on low the bool will be unset(false).
-     */
-    // TODO: Needs 2 closures or functions, that can access the dictionary. interrupt safety?? <22-01-23, Nikl> //
-    fn register_pin(&mut self, mut pin: impl InterruptablePin) {
-        let pin_id = pin.get_id();
-        pin.on_low_signal(Box::new(|| {}));
-        pin.on_high_signal(Box::new(|| {}));
-    }
-
-    ///Returns the optional Value of the pin dictionary, if pin is active
-    pub fn get_pin_state(&self, pin: usize) -> bool {
-        self.activated_pin_dict.lock().unwrap()[pin]
-    }
-
-    fn set_pin_state(&mut self, pin: usize, state: PinChange) {
-        match state {
-            PinChange::Fall => {},
-            PinChange::Rise => {
-                let current = self.get_pin_state(pin);
-                self.activated_pin_dict.lock().unwrap()[pin]=!current;
-            },
-            PinChange::Stop => {},
-        }
-    }
-}
-
 enum PinChange {
     Rise,
     Fall,
-    Stop,
 }
 
-struct PinSignalDispatcher {
-    recv: Receiver<(usize,PinChange)>,
-    sender: Sender<(usize,PinChange)>,
-    fn_on_receive:Box<dyn Fn(usize, PinChange)>,
+/// Trait for the pins needed by PinInterrupter to register functions
+pub trait InterruptablePin {
+    /// registers a function with a sender who should send the enum PinChange which is then
+    /// received by the corresponding PinInterrupter object
+    fn on_low_signal(&mut self, sender: Sender<(usize, PinChange)>);
+
+    /// registers a function with a sender who should send the enum PinChange which is then
+    /// received by the corresponding PinInterrupter object
+    fn on_high_signal(&mut self, sender: Sender<(usize, PinChange)>);
+
+    /// returns the specific pin-id
+    fn get_id(&self) -> usize;
 }
 
-impl PinSignalDispatcher {
-    pub fn new(on_receive: Box<dyn Fn(usize, PinChange)>) -> Self {
-        let (send, rec): (Sender<(usize,PinChange)>, Receiver<(usize,PinChange)>) = channel();
-        Self {
-            recv: rec,
-            sender: send,
-            fn_on_receive: on_receive,
-        }
-    }
+///Pin interrupt struct for async communication with the pins
+struct PinInterrupter {
+    activated_pin_dict: Arc<Mutex<HashMap<usize, bool>>>,
+    stop: Arc<AtomicBool>,
+    sender: Sender<(usize, PinChange)>,
+    receive_thread: JoinHandle<()>,
+}
 
-    pub fn receive(self) -> bool{
-        match self.recv.recv() {
-            Ok((pin_id,state_change)) => {
-                match state_change {
-                    PinChange::Rise | PinChange::Fall => {self.fn_on_receive.as_ref()(pin_id,state_change)},
-                    PinChange::Stop => { return false },
+impl PinInterrupter {
+    ///Creates an object and starts the receive-thread for incomming signals
+    /** Initialises a thread-save dictionary, and creates a channel for thread-communication.
+     *
+     * Also starts a thread for receiving incomming signals and changes the dictionary entry as
+     * follows:
+     *      - if no entry could be found on that pin, then the inserted value is corrosponding to
+     *      Rise(true) and Fall(false)
+     *      - if an entry could be found, the entry state is changed (true -> false; false ->
+     *      true), intependant of the Rise and Fall
+     */
+    // TODO: I dont like the behavior of incomming messages <23-02-23, Nikl> //
+    pub fn new() -> Self {
+        let (s, r): (Sender<(usize, PinChange)>, Receiver<(usize, PinChange)>) = channel();
+        let pin_dir = Arc::new(Mutex::new(HashMap::new()));
+        let st = Arc::new(AtomicBool::new(false));
+
+        // TODO: behavior maybe changeble or generic? <23-02-23, nikl> //
+        let th = thread::spawn(move || {
+            while st.load(Ordering::Relaxed) {
+                match r.recv_timeout(Duration::new(1,0)) {
+                    Ok((pos,change)) => {
+                        let dir = pin_dir.lock().unwrap();
+                        match dir.get(&pos) {
+                            Some(x) => dir.insert(pos,!x),
+                            None => {
+                                match change {
+                                   PinChange::Rise => dir.insert(pos,true),
+                                   PinChange::Fall => dir.insert(pos,false),
+                                }
+                            }
+                        };
+                        ()
+                    },
+                    Err(x) => print!("INFO,[x]: Nothing received or channel broke down in PinInterrupter receiving thread!")
                 }
-            },
-            Err(x) => {return false},
+            }
+        });
+        Self {
+            activated_pin_dict: Arc::clone(&pin_dir),
+            sender: s.clone(),
+            receive_thread: th,
+            stop: Arc::clone(&st),
         }
-        true
+    }
+    /// Registers the interups to the pins given in the implemented InterruptablePin trait
+    /** Uses the functions on_low_signal and on_high_signal from InterruptablePin to give the pin a
+     * reference to the sender which can then be used to send a PinChange::Rise or PinChange::Fall
+     *
+     */
+    pub fn register_pin(&mut self, mut pin: impl InterruptablePin) {
+        let pin_id = pin.get_id();
+        pin.on_low_signal(self.sender.clone());
+        pin.on_high_signal(self.sender.clone());
     }
 
-    pub fn get_sender(self) -> Sender<(usize,PinChange)> {
-        self.sender.clone()
+    ///Returns the optional Value of the pin dictionary, if pin is active
+    pub fn get_pin_state(&self, pin: usize) -> Option<bool> {
+        self.activated_pin_dict.lock().unwrap().get(&pin)
     }
 }
 
-//impl InterruptablePin for InputPin {
-//    fn on_low_signal<F>(&mut self, interupt: Box<F>)
-//    where
-//        F: FnMut() + std::marker::Send,
-//    {
-//        self.set_async_interrupt(Trigger::RisingEdge, |_| interupt());
-//    }
-//    fn on_high_signal<F>(&mut self, interupt: Box<F>)
-//    where
-//        F: FnMut() + std::marker::Send,
-//    {
-//        self.set_async_interrupt(Trigger::RisingEdge, |_| interupt());
-//    }
-//    fn get_id(&self) -> usize {
-//        self.pin() as usize
-//    }
-//}
+/// Implementing Drop for a save stop of the background thread
+impl Drop for PinInterrupter {
+    /// Drops the Pininterrupter and stops the receive thread for the incomming signals of the pins or prints an error if
+    /// something go's wrong
+    fn drop(&mut self) {
+        self.stop.store(true, Ordering::Relaxed);
+        match self.receive_thread.join() {
+            Ok(x) => x,
+            Err(_) => print!("ERROR: Couldn't join the receiving thread from PinInterrupter!"),
+        }
+    }
+}
+
+impl InterruptablePin for InputPin {
+    fn on_low_signal(&mut self, sender: Sender<(usize, PinChange)>) {
+        self.set_async_interrupt(Trigger::RisingEdge, move |_| {
+            sender.send((self.get_id(), PinChange::Rise));
+            ()
+        });
+    }
+    fn on_high_signal(&mut self, sender: Sender<(usize, PinChange)>) {
+        self.set_async_interrupt(Trigger::RisingEdge, move |_| {
+            sender.send((self.get_id(), PinChange::Fall));
+            ()
+        });
+    }
+    fn get_id(&self) -> usize {
+        self.pin() as usize
+    }
+}
