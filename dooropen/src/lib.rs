@@ -36,7 +36,7 @@ struct PinInterrupter {
     activated_pin_dict: Arc<Mutex<HashMap<usize, bool>>>,
     stop: Arc<AtomicBool>,
     sender: Sender<(usize, PinChange)>,
-    receive_thread: JoinHandle<()>,
+    receive_thread: &JoinHandle<()>,
 }
 
 impl PinInterrupter {
@@ -55,28 +55,34 @@ impl PinInterrupter {
         let (s, r): (Sender<(usize, PinChange)>, Receiver<(usize, PinChange)>) = channel();
         let pin_dir = Arc::new(Mutex::new(HashMap::new()));
         let st = Arc::new(AtomicBool::new(false));
+        let th: &JoinHandle<()>;
 
         // TODO: behavior maybe changeble or generic? <23-02-23, nikl> //
-        let th = thread::spawn(move || {
-            while st.load(Ordering::Relaxed) {
-                match r.recv_timeout(Duration::new(1,0)) {
-                    Ok((pos,change)) => {
-                        let dir = pin_dir.lock().unwrap();
-                        match dir.get(&pos) {
-                            Some(x) => dir.insert(pos,!x),
-                            None => {
-                                match change {
-                                   PinChange::Rise => dir.insert(pos,true),
-                                   PinChange::Fall => dir.insert(pos,false),
+        {
+            let r = r;
+            let pin_dir = pin_dir.clone();
+            let st = st.clone();
+            th = &thread::spawn(move || {
+                while st.load(Ordering::Relaxed) {
+                    match r.recv_timeout(Duration::new(1,0)) {
+                        Ok((pos,change)) => {
+                            let dir = pin_dir.lock().unwrap();
+                            match dir.get(&pos) {
+                                Some(x) => dir.insert(pos,!x),
+                                None => {
+                                    match change {
+                                        PinChange::Rise => dir.insert(pos,true),
+                                        PinChange::Fall => dir.insert(pos,false),
+                                    }
                                 }
-                            }
-                        };
-                        ()
-                    },
-                    Err(x) => print!("INFO,[x]: Nothing received or channel broke down in PinInterrupter receiving thread!")
+                            };
+                            ()
+                        },
+                        Err(x) => print!("INFO,[x]: Nothing received or channel broke down in PinInterrupter receiving thread!")
+                    }
                 }
-            }
-        });
+            });
+        }
         Self {
             activated_pin_dict: Arc::clone(&pin_dir),
             sender: s.clone(),
@@ -97,7 +103,7 @@ impl PinInterrupter {
 
     ///Returns the optional Value of the pin dictionary, if pin is active
     pub fn get_pin_state(&self, pin: usize) -> Option<bool> {
-        self.activated_pin_dict.lock().unwrap().get(&pin)
+                    self.activated_pin_dict.lock().unwrap().clone().get(&pin).copied()
     }
 }
 
