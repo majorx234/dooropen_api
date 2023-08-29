@@ -1,17 +1,20 @@
+use log::info;
 use rppal::gpio::{InputPin, Trigger};
 use std::{
     collections::HashMap,
     ops::Not,
     sync::{
         atomic::{AtomicBool, Ordering},
-        mpsc::{channel, Receiver, Sender},
+        mpsc::{sync_channel, Receiver, Sender, SyncSender},
         Arc, Mutex,
     },
+    thread::{self, JoinHandle},
     time::Duration,
 };
 
 pub mod server;
 
+#[derive(Debug)]
 pub enum PinChange {
     Rise,
     Fall,
@@ -21,34 +24,32 @@ pub enum PinChange {
 pub trait InterruptablePin {
     /// registers a function with a sender who should send the enum PinChange which is then
     /// received by the corresponding PinInterrupter object
-    fn on_low_signal(&mut self, sender: Sender<(usize, PinChange)>);
+    fn on_low_signal(&mut self, sender: SyncSender<(usize, PinChange)>);
 
     /// registers a function with a sender who should send the enum PinChange which is then
     /// received by the corresponding PinInterrupter object
-    fn on_high_signal(&mut self, sender: Sender<(usize, PinChange)>);
+    fn on_high_signal(&mut self, sender: SyncSender<(usize, PinChange)>);
 
-    /// returns the specific pin-id
+    /// returns the specific pin-idvivoactive
     fn get_id(&self) -> usize;
 }
 
 ///Pin interrupt struct for async communication with the pins
-struct PinInterrupter {
+#[derive(Clone)]
+pub struct PinInterrupter {
     // receive_thread: JoinHandle<()>,
     // stop: Arc<AtomicBool>,
     activated_pin_dict: Arc<Mutex<HashMap<usize, bool>>>,
-    sender: Sender<(usize, PinChange)>,
-    receiver: Receiver<(usize, PinChange)>,
+    sender: SyncSender<(usize, PinChange)>,
 }
 
 impl PinInterrupter {
-    pub fn new() -> Self {
-        let (s, r): (Sender<(usize, PinChange)>, Receiver<(usize, PinChange)>) = channel();
+    pub fn new(sync_sender: SyncSender<(usize, PinChange)>) -> Self {
         let pin_dir = Arc::new(Mutex::new(HashMap::<usize, bool>::new()));
 
         Self {
             activated_pin_dict: pin_dir,
-            sender: s,
-            receiver: r,
+            sender: sync_sender,
         }
     }
 
@@ -57,9 +58,14 @@ impl PinInterrupter {
      * reference to the sender which can then be used to send a PinChange::Rise or PinChange::Fall
      *
      */
-    pub fn register_pin(&mut self, mut pin: impl InterruptablePin) {
+    pub fn register_pin(&mut self, pin: &mut impl InterruptablePin) {
         pin.on_low_signal(self.sender.clone());
         pin.on_high_signal(self.sender.clone());
+        self.activated_pin_dict
+            .lock()
+            .expect("couldn't lock in register_pin")
+            .insert(pin.get_id(), false);
+        info!("Registered pin_id: {}", pin.get_id());
     }
 
     ///Returns the optional Value of the pin dictionary, if pin is active
@@ -72,17 +78,32 @@ impl PinInterrupter {
             .copied()
     }
 
-    pub fn start_thread(&mut self, stop: Arc<AtomicBool>) {
-        while stop.load(Ordering::Relaxed) {
-            match self.receiver.recv_timeout(Duration::new(1,0)) {
+    // Start-function for the externaly run thread
+    //  - uses stop to determine, when to end the loop
+    pub async fn start_thread(
+        &mut self,
+        stop: Arc<AtomicBool>,
+        // duration: Duration,
+        receiver: Receiver<(usize, PinChange)>,
+    ) -> JoinHandle<()> {
+        let activ_dir = self.activated_pin_dict.clone();
+        thread::spawn(move || {
+            while stop.load(Ordering::Relaxed) {
+                // match self.receiver.recv_timeout(duration) {
+                match receiver.recv() {
             Ok((pos,change)) => {
-                let mut dir = self.activated_pin_dict.lock().expect("Error on lock");
+                let mut dir = activ_dir.lock().expect("Error on lock");
+                info!("Received change: {:?} on Position: {:?}", change, pos);
                 match  dir.get_mut(&( pos.clone() )) {
                     Some(x) => *x = x.not(),
                     None => {
                         match change {
-                            PinChange::Rise => dir.insert(pos,true),
-                            PinChange::Fall => dir.insert(pos,false),
+                            PinChange::Rise => { dir.insert(pos,true);
+                            info!("Inserted {} into dir on pos: {}", true, pos);},
+                            PinChange::Fall => {
+                                dir.insert(pos,false);
+                            info!("Inserted {} into dir on pos: {}", true, pos);
+                            },
                         };
                         ()
                     }
@@ -91,30 +112,35 @@ impl PinInterrupter {
             },
             Err(x) => print!("INFO,{} Nothing received or channel broke down in PinInterrupter receiving thread!", x)
             }
-        }
+            }
+        })
     }
 }
 
 impl InterruptablePin for InputPin {
-    fn on_low_signal(&mut self, sender: Sender<(usize, PinChange)>) {
+    fn on_low_signal(&mut self, sender: SyncSender<(usize, PinChange)>) {
         let i = self.get_id();
         self.set_async_interrupt(Trigger::FallingEdge, move |_| {
             sender
                 .send((i, PinChange::Fall))
                 .expect("Error on interupt FallingEdge: couldn't send over channel to hasmap");
+            info!("Falling edge on: {}", i);
             ()
         })
         .expect("Error on setting interupt for FallingEdge for InputPin");
+        info!("Registered async interupt on: {}", i);
     }
-    fn on_high_signal(&mut self, sender: Sender<(usize, PinChange)>) {
+    fn on_high_signal(&mut self, sender: SyncSender<(usize, PinChange)>) {
         let i = self.get_id();
         self.set_async_interrupt(Trigger::RisingEdge, move |_| {
             sender
                 .send((i, PinChange::Rise))
                 .expect("Error on interupt RisingEdge: couldn't send over channel to hasmap");
+            info!("Rising edge on: {}", i);
             ()
         })
         .expect("Error on setting interupt for RisingEdge for InputPin");
+        info!("Registered async interupt on: {}", i);
     }
     fn get_id(&self) -> usize {
         self.pin() as usize
