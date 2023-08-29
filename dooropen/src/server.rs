@@ -1,5 +1,5 @@
 use crate::server::PingResponse::Success;
-use crate::{PinChange, PinInterrupter};
+use crate::{start_thread, PinChange, PinInterrupter};
 use async_trait::async_trait;
 use dooropen_api::models::Status;
 use futures::{future, Stream, StreamExt, TryFutureExt, TryStreamExt};
@@ -40,12 +40,9 @@ pub async fn create(addr: &str, https: bool) {
         .expect("Lock Error in Server")
         .register_pin(&mut pin);
 
-    pin_handle
-        .lock()
-        .expect("Mutex lock error on pin dir")
-        .start_thread(stop_thread, r);
+    let jh = start_thread(pin_handle.clone(), stop_thread, r);
 
-    let server = Server::new(pin_handle);
+    let server = Server::new(pin_handle.clone());
 
     let service = MakeService::new(server);
 

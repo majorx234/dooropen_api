@@ -39,13 +39,13 @@ pub trait InterruptablePin {
 pub struct PinInterrupter {
     // receive_thread: JoinHandle<()>,
     // stop: Arc<AtomicBool>,
-    activated_pin_dict: Arc<Mutex<HashMap<usize, bool>>>,
+    activated_pin_dict: HashMap<usize, bool>,
     sender: SyncSender<(usize, PinChange)>,
 }
 
 impl PinInterrupter {
     pub fn new(sync_sender: SyncSender<(usize, PinChange)>) -> Self {
-        let pin_dir = Arc::new(Mutex::new(HashMap::<usize, bool>::new()));
+        let pin_dir = HashMap::<usize, bool>::new();
 
         Self {
             activated_pin_dict: pin_dir,
@@ -59,43 +59,39 @@ impl PinInterrupter {
      *
      */
     pub fn register_pin(&mut self, pin: &mut impl InterruptablePin) {
-        pin.on_low_signal(self.sender.clone());
+        // pin.on_low_signal(self.sender.clone());
         pin.on_high_signal(self.sender.clone());
-        self.activated_pin_dict
-            .lock()
-            .expect("couldn't lock in register_pin")
-            .insert(pin.get_id(), false);
+        self.activated_pin_dict.insert(pin.get_id(), false);
         info!("Registered pin_id: {}", pin.get_id());
     }
 
     ///Returns the optional Value of the pin dictionary, if pin is active
     pub fn get_pin_state(&self, pin: usize) -> Option<bool> {
-        self.activated_pin_dict
-            .lock()
-            .unwrap()
-            .clone()
-            .get(&pin)
-            .copied()
+        self.activated_pin_dict.clone().get(&pin).copied()
     }
 
     // Start-function for the externaly run thread
     //  - uses stop to determine, when to end the loop
-    pub async fn start_thread(
-        &mut self,
-        stop: Arc<AtomicBool>,
-        // duration: Duration,
-        receiver: Receiver<(usize, PinChange)>,
-    ) -> JoinHandle<()> {
-        let activ_dir = self.activated_pin_dict.clone();
-        thread::spawn(move || {
-            while stop.load(Ordering::Relaxed) {
-                // match self.receiver.recv_timeout(duration) {
-                match receiver.recv() {
+}
+pub fn start_thread(
+    pin_int: Arc<Mutex<PinInterrupter>>,
+    stop: Arc<AtomicBool>,
+    receiver: Receiver<(usize, PinChange)>,
+) -> JoinHandle<()> {
+    thread::spawn(move || {
+        while !stop.load(Ordering::Relaxed) {
+            match receiver.recv() {
             Ok((pos,change)) => {
-                let mut dir = activ_dir.lock().expect("Error on lock");
                 info!("Received change: {:?} on Position: {:?}", change, pos);
-                match  dir.get_mut(&( pos.clone() )) {
-                    Some(x) => *x = x.not(),
+                let dir: &mut HashMap<usize, bool> = &mut pin_int
+                    .lock()
+                    .expect("Couldn't lock on dictionary clone!")
+                    .activated_pin_dict;
+                match  &mut dir.get_mut(&( pos.clone() )) {
+                    Some(x) => {
+                        **x = x.not();
+                        info!("Changed entry in {:?} to {:?}",pos,dir.get(&pos.clone()));
+                    },
                     None => {
                         match change {
                             PinChange::Rise => { dir.insert(pos,true);
@@ -112,9 +108,9 @@ impl PinInterrupter {
             },
             Err(x) => print!("INFO,{} Nothing received or channel broke down in PinInterrupter receiving thread!", x)
             }
-            }
-        })
-    }
+        }
+        info!("Thread stopped!");
+    })
 }
 
 impl InterruptablePin for InputPin {
@@ -124,7 +120,7 @@ impl InterruptablePin for InputPin {
             sender
                 .send((i, PinChange::Fall))
                 .expect("Error on interupt FallingEdge: couldn't send over channel to hasmap");
-            info!("Falling edge on: {}", i);
+            // println!("Falling edge on: {}", i);
             ()
         })
         .expect("Error on setting interupt for FallingEdge for InputPin");
@@ -133,10 +129,15 @@ impl InterruptablePin for InputPin {
     fn on_high_signal(&mut self, sender: SyncSender<(usize, PinChange)>) {
         let i = self.get_id();
         self.set_async_interrupt(Trigger::RisingEdge, move |_| {
-            sender
-                .send((i, PinChange::Rise))
-                .expect("Error on interupt RisingEdge: couldn't send over channel to hasmap");
-            info!("Rising edge on: {}", i);
+            sender.send((i, PinChange::Rise)).unwrap_or_else(|e| {
+                info!(
+                    "couldn't send over channel to hasmap, disconnected?; send: {:?}, Err: {:?}",
+                    i, e
+                );
+                ()
+            });
+            // .expect("Error on interupt RisingEdge: couldn't send over channel to hasmap");
+            println!("Rising edge on: {}", i);
             ()
         })
         .expect("Error on setting interupt for RisingEdge for InputPin");
