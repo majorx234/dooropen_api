@@ -1,13 +1,21 @@
-#![allow(missing_docs, trivial_casts, unused_variables, unused_mut, unused_imports, unused_extern_crates, non_camel_case_types)]
+#![allow(
+    missing_docs,
+    trivial_casts,
+    unused_variables,
+    unused_mut,
+    unused_imports,
+    unused_extern_crates,
+    non_camel_case_types
+)]
 #![allow(unused_imports, unused_attributes)]
 #![allow(clippy::derive_partial_eq_without_eq, clippy::blacklisted_name)]
 
 use async_trait::async_trait;
 use futures::Stream;
+use serde::{Deserialize, Serialize};
 use std::error::Error;
-use std::task::{Poll, Context};
+use std::task::{Context, Poll};
 use swagger::{ApiError, ContextWrapper};
-use serde::{Serialize, Deserialize};
 
 type ServiceError = Box<dyn Error + Send + Sync + 'static>;
 
@@ -18,69 +26,60 @@ pub const API_VERSION: &str = "1.0";
 #[must_use]
 pub enum DoorStatusResponse {
     /// Success
-    Success
-    (models::DoorStatus)
-    ,
+    Success(models::DoorStatus),
     /// The HTTP 403 Forbidden client error status response code indicates that the server understood the request but refuses to authorize it.
-    TheHTTP
-    (models::ErrorResponse)
+    TheHTTP(models::ErrorResponse),
 }
 
 #[derive(Debug, PartialEq, Serialize, Deserialize)]
 #[must_use]
 pub enum PingResponse {
     /// Success
-    Success
-    (models::Status)
-    ,
+    Success(models::Status),
     /// The HTTP 403 Forbidden client error status response code indicates that the server understood the request but refuses to authorize it.
-    TheHTTP
-    (models::ErrorResponse)
+    TheHTTP(models::ErrorResponse),
 }
 
 /// API
 #[async_trait]
 #[allow(clippy::too_many_arguments, clippy::ptr_arg)]
 pub trait Api<C: Send + Sync> {
-    fn poll_ready(&self, _cx: &mut Context) -> Poll<Result<(), Box<dyn Error + Send + Sync + 'static>>> {
+    fn poll_ready(
+        &self,
+        _cx: &mut Context,
+    ) -> Poll<Result<(), Box<dyn Error + Send + Sync + 'static>>> {
         Poll::Ready(Ok(()))
     }
 
     /// Get status of the door
-    async fn door_status(
-        &self,
-        context: &C) -> Result<DoorStatusResponse, ApiError>;
+    async fn door_status(&self, context: &C) -> Result<DoorStatusResponse, ApiError>;
 
     /// Ping the REST API
-    async fn ping(
-        &self,
-        context: &C) -> Result<PingResponse, ApiError>;
-
+    async fn ping(&self, context: &C) -> Result<PingResponse, ApiError>;
 }
 
 /// API where `Context` isn't passed on every API call
 #[async_trait]
 #[allow(clippy::too_many_arguments, clippy::ptr_arg)]
 pub trait ApiNoContext<C: Send + Sync> {
-
-    fn poll_ready(&self, _cx: &mut Context) -> Poll<Result<(), Box<dyn Error + Send + Sync + 'static>>>;
+    fn poll_ready(
+        &self,
+        _cx: &mut Context,
+    ) -> Poll<Result<(), Box<dyn Error + Send + Sync + 'static>>>;
 
     fn context(&self) -> &C;
 
     /// Get status of the door
-    async fn door_status(
-        &self,
-        ) -> Result<DoorStatusResponse, ApiError>;
+    async fn door_status(&self) -> Result<DoorStatusResponse, ApiError>;
 
     /// Ping the REST API
-    async fn ping(
-        &self,
-        ) -> Result<PingResponse, ApiError>;
-
+    async fn ping(&self) -> Result<PingResponse, ApiError>;
 }
 
 /// Trait to extend an API to make it easy to bind it to a context.
-pub trait ContextWrapperExt<C: Send + Sync> where Self: Sized
+pub trait ContextWrapperExt<C: Send + Sync>
+where
+    Self: Sized,
 {
     /// Binds this API to a context.
     fn with_context(self, context: C) -> ContextWrapper<Self, C>;
@@ -88,7 +87,7 @@ pub trait ContextWrapperExt<C: Send + Sync> where Self: Sized
 
 impl<T: Api<C> + Send + Sync, C: Clone + Send + Sync> ContextWrapperExt<C> for T {
     fn with_context(self: T, context: C) -> ContextWrapper<T, C> {
-         ContextWrapper::<T, C>::new(self, context)
+        ContextWrapper::<T, C>::new(self, context)
     }
 }
 
@@ -103,25 +102,17 @@ impl<T: Api<C> + Send + Sync, C: Clone + Send + Sync> ApiNoContext<C> for Contex
     }
 
     /// Get status of the door
-    async fn door_status(
-        &self,
-        ) -> Result<DoorStatusResponse, ApiError>
-    {
+    async fn door_status(&self) -> Result<DoorStatusResponse, ApiError> {
         let context = self.context().clone();
         self.api().door_status(&context).await
     }
 
     /// Ping the REST API
-    async fn ping(
-        &self,
-        ) -> Result<PingResponse, ApiError>
-    {
+    async fn ping(&self) -> Result<PingResponse, ApiError> {
         let context = self.context().clone();
         self.api().ping(&context).await
     }
-
 }
-
 
 #[cfg(feature = "client")]
 pub mod client;
