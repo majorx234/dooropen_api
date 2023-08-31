@@ -1,5 +1,5 @@
+use crate::pin_handle::{PinInterrupter, PinLevel};
 use crate::server::PingResponse::Success;
-use crate::{start_thread, PinChange, PinInterrupter};
 use async_trait::async_trait;
 use dooropen_api::models::Status;
 use futures::{future, Stream, StreamExt, TryFutureExt, TryStreamExt};
@@ -8,6 +8,7 @@ use hyper::service::Service;
 use log::info;
 use openssl::ssl::SslStream;
 use rppal::gpio::{Gpio, InputPin, Pin};
+use std::collections::HashMap;
 use std::future::Future;
 use std::marker::PhantomData;
 use std::net::SocketAddr;
@@ -29,20 +30,15 @@ use dooropen_api::models;
 pub async fn create(addr: &str, https: bool) {
     let addr = addr.parse().expect("Failed to parse bind address");
 
-    let (s, r): (SyncSender<(usize, PinChange)>, Receiver<(usize, PinChange)>) = sync_channel(10);
-    let pin_handle = Arc::new(Mutex::new(PinInterrupter::new(s)));
-    let stop_thread: Arc<AtomicBool> = Arc::new(AtomicBool::new(false));
+    let mut pin_int = PinInterrupter::new();
 
     let g = Gpio::new().expect("Gpio init failed!");
     let mut pin = g.get(3).expect("Couldn't get gpio pin 3").into_input();
-    pin_handle
-        .lock()
-        .expect("Lock Error in Server")
-        .register_pin(&mut pin);
+    pin_int.register_pin(&mut pin);
 
-    let jh = start_thread(pin_handle.clone(), stop_thread, r);
+    let jh = pin_int.start();
 
-    let server = Server::new(pin_handle.clone());
+    let server = Server::new(pin_int.get_pin_dictionary());
 
     let service = MakeService::new(server);
 
@@ -104,11 +100,11 @@ pub async fn create(addr: &str, https: bool) {
 #[derive(Clone)]
 pub struct Server<C> {
     marker: PhantomData<C>,
-    pin_dir: Arc<Mutex<PinInterrupter>>,
+    pin_dir: Arc<Mutex<HashMap<usize, PinLevel>>>,
 }
 
 impl<C> Server<C> {
-    pub fn new(pin_dir: Arc<Mutex<PinInterrupter>>) -> Self {
+    pub fn new(pin_dir: Arc<Mutex<HashMap<usize, PinLevel>>>) -> Self {
         Server {
             marker: PhantomData,
             pin_dir: pin_dir,
@@ -134,9 +130,12 @@ where
             .pin_dir
             .lock()
             .expect("Couldn't lock pin_dir on doorstatus!")
-            .get_pin_state(3)
+            .get(&3)
         {
-            Some(state) => state,
+            Some(state) => match state {
+                PinLevel::High => true,
+                PinLevel::Low => false,
+            },
             None => {
                 println!("Couldn't get state of 3, no entry in dictionary !");
                 return Err(ApiError(
