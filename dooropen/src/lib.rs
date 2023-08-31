@@ -1,10 +1,3 @@
-use log::info;
-use pin_handle::{InterruptablePin, PinLevel};
-use rppal::gpio::{InputPin, Trigger};
-use std::sync::mpsc::SyncSender;
-
-pub mod server;
-
 pub mod pin_handle {
     use std::{
         collections::HashMap,
@@ -46,8 +39,9 @@ pub mod pin_handle {
         // stop flag for the thread
         stop: Arc<AtomicBool>,
 
-        // receiver used in the PinInterrupter thread
-        receiver: Receiver<(usize, PinLevel)>,
+        receive_thread: JoinHandle<Receiver<(usize, PinLevel)>>,
+        // // receiver used in the PinInterrupter thread
+        // receiver: Receiver<(usize, PinLevel)>,
     }
 
     impl PinInterrupter {
@@ -56,11 +50,13 @@ pub mod pin_handle {
         pub fn new() -> Self {
             let (sync_sender, receiver) = sync_channel(10);
             let pin_dir = Arc::new(Mutex::new(HashMap::<usize, PinLevel>::new()));
+            let stop = Arc::new(AtomicBool::new(false));
+            let jh = start_interupter_thread(pin_dir.clone(), stop.clone(), receiver);
             Self {
                 activated_pin_dict: pin_dir,
                 sender: sync_sender,
-                stop: Arc::new(AtomicBool::new(false)),
-                receiver,
+                stop: stop,
+                receive_thread: jh,
             }
         }
 
@@ -73,15 +69,6 @@ pub mod pin_handle {
             info!("Registered pin_id: {}", pin.get_id());
         }
 
-        // ///Returns the optional Value of the pin dictionary, if pin is active
-        // pub fn get_pin_state(&self, pin: usize) -> Option<PinLevel> {
-        //     self.activated_pin_dict
-        //         .lock()
-        //         .expect("Couldn't lock activated_pin_dict on getting pin state")
-        //         .get(&pin)
-        //         .copied()
-        // }
-
         // Returns a reference to the internal dictionary with the in entry, accassable with the
         // InterruptablePin::get_id() function as key
         // TODO: maybe a wrapper for the dictonary for better access?
@@ -91,8 +78,18 @@ pub mod pin_handle {
 
         // starts a thread which receives the via interrupt send messages and stores them in the
         // dictionary
-        pub fn start(&mut self) -> JoinHandle<()> {
-            start_interupter_thread(self.activated_pin_dict, self.stop, self.receiver)
+        pub fn start(&mut self) -> thread::Result<bool> {
+            if self.receive_thread.is_finished() {
+                let receiver: Receiver<(usize, PinLevel)> = self.receive_thread.join()?;
+                self.receive_thread = start_interupter_thread(
+                    self.activated_pin_dict.clone(),
+                    self.stop.clone(),
+                    receiver,
+                );
+                Ok(true)
+            } else {
+                Ok(false)
+            }
         }
 
         // sets the stop flag for savely stopping the thread
@@ -108,7 +105,7 @@ pub mod pin_handle {
         pin_dict: Arc<Mutex<HashMap<usize, PinLevel>>>,
         stop: Arc<AtomicBool>,
         receiver: Receiver<(usize, PinLevel)>,
-    ) -> JoinHandle<()> {
+    ) -> JoinHandle<Receiver<(usize, PinLevel)>> {
         thread::spawn(move || {
             while !stop.load(Ordering::Relaxed) {
                 match receiver.recv() {
@@ -126,18 +123,24 @@ pub mod pin_handle {
                     None => {
                              dict.insert(pos,change);
                             info!("Inserted {:?} into dir on pos: {}", change, pos);
-                            ()
                             },
                 };
-                ()
             },
             Err(x) => info!("INFO,{} Nothing received or channel broke down in PinInterrupter receiving thread!", x)
             }
             }
             info!("Thread stopped!");
+            receiver
         })
     }
 } /* pin_handle */
+
+use log::info;
+use pin_handle::{InterruptablePin, PinLevel};
+use rppal::gpio::{InputPin, Trigger};
+use std::sync::mpsc::SyncSender;
+
+pub mod server;
 
 // Implementation for GPIO Inputpin which registers a function for the pin which sends a signal to
 // the thread that registers the entry
@@ -145,7 +148,11 @@ impl InterruptablePin for InputPin {
     fn register_signal(&mut self, sender: SyncSender<(usize, PinLevel)>) {
         let i = self.get_id();
         self.set_async_interrupt(Trigger::Both, move |l| {
-            sender.send((i, PinLevel::High)).unwrap_or_else(|e| {
+            let pl = match l {
+                rppal::gpio::Level::Low => PinLevel::Low,
+                rppal::gpio::Level::High => PinLevel::High,
+            };
+            sender.send((i, pl)).unwrap_or_else(|e| {
                 info!(
                     "couldn't send over channel, disconnected?; send: {:?}, Err: {:?}",
                     i, e
