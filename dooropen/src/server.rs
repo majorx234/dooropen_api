@@ -1,28 +1,18 @@
-use crate::pin_handle::{PinInterrupter, PinLevel};
-use crate::server::PingResponse::Success;
+use crate::pin_handle::{init_handle, PinLevel, PinRegistry};
 use async_trait::async_trait;
 use dooropen_api::models::Status;
-use futures::{future, Stream, StreamExt, TryFutureExt, TryStreamExt};
 use hyper::server::conn::Http;
 use hyper::service::Service;
 use log::info;
-use openssl::ssl::SslStream;
-use rppal::gpio::{Gpio, InputPin, Pin};
-use std::collections::HashMap;
-use std::future::Future;
+use rppal::gpio::{Gpio, InputPin};
 use std::marker::PhantomData;
-use std::net::SocketAddr;
-use std::sync::atomic::AtomicBool;
-use std::sync::mpsc::{sync_channel, Receiver, SyncSender};
-use std::sync::{Arc, Mutex};
-use std::task::{Context, Poll};
 use swagger::auth::MakeAllowAllAuthenticator;
 use swagger::EmptyContext;
 use swagger::{Has, XSpanIdString};
 use tokio::net::TcpListener;
 
 #[cfg(not(any(target_os = "macos", target_os = "windows", target_os = "ios")))]
-use openssl::ssl::{Ssl, SslAcceptor, SslAcceptorBuilder, SslFiletype, SslMethod};
+use openssl::ssl::{Ssl, SslAcceptor, SslFiletype, SslMethod};
 
 use dooropen_api::models;
 
@@ -30,15 +20,18 @@ use dooropen_api::models;
 pub async fn create(addr: &str, https: bool) {
     let addr = addr.parse().expect("Failed to parse bind address");
 
-    let mut pin_int = PinInterrupter::new();
+    // let mut pin_int = PinInterrupter::new();
 
     let g = Gpio::new().expect("Gpio init failed!");
-    let mut pin = g.get(3).expect("Couldn't get gpio pin 3").into_input();
-    pin_int.register_pin(&mut pin);
+    let pin = g.get(3).expect("Couldn't get gpio pin 3").into_input();
+    // pin_int.register_pin(&mut pin);
 
-    let jh = pin_int.start();
+    // let jh = pin_int.start();
+    // TODO better thread handle
+    let (_pin_handle, mut pin_reg) = init_handle::<InputPin>();
+    pin_reg.register_pin(pin);
 
-    let server = Server::new(pin_int.get_pin_dictionary());
+    let server = Server::new(pin_reg);
 
     let service = MakeService::new(server);
 
@@ -100,21 +93,20 @@ pub async fn create(addr: &str, https: bool) {
 #[derive(Clone)]
 pub struct Server<C> {
     marker: PhantomData<C>,
-    pin_dir: Arc<Mutex<HashMap<usize, PinLevel>>>,
+    pin_reg: PinRegistry<InputPin>,
 }
 
 impl<C> Server<C> {
-    pub fn new(pin_dir: Arc<Mutex<HashMap<usize, PinLevel>>>) -> Self {
+    pub fn new(pin_dir: PinRegistry<InputPin>) -> Self {
         Server {
             marker: PhantomData,
-            pin_dir: pin_dir,
+            pin_reg: pin_dir,
         }
     }
 }
 
 use dooropen_api::server::MakeService;
 use dooropen_api::{Api, DoorStatusResponse, PingResponse};
-use std::error::Error;
 use swagger::ApiError;
 
 #[async_trait]
@@ -126,12 +118,7 @@ where
     async fn door_status(&self, context: &C) -> Result<DoorStatusResponse, ApiError> {
         let context = context.clone();
         info!("door_status() - X-Span-ID: {:?}", context.get().0.clone());
-        let state = match self
-            .pin_dir
-            .lock()
-            .expect("Couldn't lock pin_dir on doorstatus!")
-            .get(&3)
-        {
+        let state = match self.pin_reg.get_pin_level(3) {
             Some(state) => match state {
                 PinLevel::High => true,
                 PinLevel::Low => false,

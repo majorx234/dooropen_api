@@ -26,89 +26,16 @@ pub mod pin_handle {
         /// returns the specific pin-id
         fn get_id(&self) -> usize;
     }
-
-    ///Pin interrupt struct for async communication with the pins
-    pub struct PinInterrupter {
-        // threadsave pin dictionary for saving the state of the currently registered pins
-        activated_pin_dict: Arc<Mutex<HashMap<usize, PinLevel>>>,
-
-        // sender for sending the state of the pins to the PinInterrupter thread, used with the
-        // InterruptablePin trait
-        sender: SyncSender<(usize, PinLevel)>,
-
-        // stop flag for the thread
-        stop: Arc<AtomicBool>,
-
-        receive_thread: JoinHandle<Receiver<(usize, PinLevel)>>,
-        // // receiver used in the PinInterrupter thread
-        // receiver: Receiver<(usize, PinLevel)>,
-    }
-
-    impl PinInterrupter {
-        // creates the new PinInterrupter object -> creates a HashMap and opens a channel for
-        // communication with the interups
-        pub fn new() -> Self {
-            let (sync_sender, receiver) = sync_channel(10);
-            let pin_dir = Arc::new(Mutex::new(HashMap::<usize, PinLevel>::new()));
-            let stop = Arc::new(AtomicBool::new(false));
-            let jh = start_interupter_thread(pin_dir.clone(), stop.clone(), receiver);
-            Self {
-                activated_pin_dict: pin_dir,
-                sender: sync_sender,
-                stop: stop,
-                receive_thread: jh,
-            }
-        }
-
-        /// Registers the interups to the pins given in the implemented InterruptablePin trait
-        /** Uses the functions on_low_signal and on_high_signal from InterruptablePin to give the pin a
-         * reference to the sender which can then be used to send a PinChange::Rise or PinChange::Fall
-         */
-        pub fn register_pin(&mut self, pin: &mut impl InterruptablePin) {
-            pin.register_signal(self.sender.clone());
-            info!("Registered pin_id: {}", pin.get_id());
-        }
-
-        // Returns a reference to the internal dictionary with the in entry, accassable with the
-        // InterruptablePin::get_id() function as key
-        // TODO: maybe a wrapper for the dictonary for better access?
-        pub fn get_pin_dictionary(self) -> Arc<Mutex<HashMap<usize, PinLevel>>> {
-            self.activated_pin_dict.clone()
-        }
-
-        // starts a thread which receives the via interrupt send messages and stores them in the
-        // dictionary
-        pub fn start(&mut self) -> thread::Result<bool> {
-            if self.receive_thread.is_finished() {
-                let receiver: Receiver<(usize, PinLevel)> = self.receive_thread.join()?;
-                self.receive_thread = start_interupter_thread(
-                    self.activated_pin_dict.clone(),
-                    self.stop.clone(),
-                    receiver,
-                );
-                Ok(true)
-            } else {
-                Ok(false)
-            }
-        }
-
-        // sets the stop flag for savely stopping the thread
-        // NOTE: currently a bit useless because thread can block if no message is received!
-        pub fn stop(&mut self) {
-            self.stop.store(true, Ordering::Relaxed);
-        }
-    }
-
     // Start-function for the externaly run thread
     //  - uses stop to determine, when to end the loop
     fn start_interupter_thread(
         pin_dict: Arc<Mutex<HashMap<usize, PinLevel>>>,
         stop: Arc<AtomicBool>,
-        receiver: Receiver<(usize, PinLevel)>,
-    ) -> JoinHandle<Receiver<(usize, PinLevel)>> {
+        receiver: Arc<Mutex<Receiver<(usize, PinLevel)>>>,
+    ) -> JoinHandle<()> {
         thread::spawn(move || {
             while !stop.load(Ordering::Relaxed) {
-                match receiver.recv() {
+                match receiver.lock().expect("Couldn't lock receiver in interrupt thread of PinHandle").recv() {
             Ok((pos,change)) => {
                 info!("Received change: {:?} on Position: {:?}", change, pos);
                 let dict = &mut pin_dict
@@ -130,10 +57,167 @@ pub mod pin_handle {
             }
             }
             info!("Thread stopped!");
-            receiver
+            ()
         })
     }
+
+    ///Pin interrupt struct for async communication with the pins
+    #[derive(Debug)]
+    pub struct PinRegistry<T: InterruptablePin> {
+        // threadsave pin dictionary for saving the state of the currently registered pins
+        pin_level_dictionary: Arc<Mutex<HashMap<usize, PinLevel>>>,
+
+        pin_dictionary: Arc<Mutex<HashMap<usize, T>>>,
+
+        // sender for sending the state of the pins to the thread, used with the
+        // InterruptablePin trait
+        sender: SyncSender<(usize, PinLevel)>,
+    }
+
+    impl<T: InterruptablePin> Clone for PinRegistry<T> {
+        fn clone_from(&mut self, source: &Self) {
+            *self = source.clone()
+        }
+
+        fn clone(&self) -> Self {
+            Self {
+                pin_level_dictionary: self.pin_level_dictionary.clone(),
+                pin_dictionary: self.pin_dictionary.clone(),
+                sender: self.sender.clone(),
+            }
+        }
+    }
+
+    impl<T> PinRegistry<T>
+    where
+        T: InterruptablePin,
+    {
+        // creates the new PinRegistry object -> creates the HasmMaps and takes a sender for
+        // regitering the interrupts
+        fn new(sender: SyncSender<(usize, PinLevel)>) -> Self {
+            Self {
+                pin_level_dictionary: Arc::new(Mutex::new(HashMap::<usize, PinLevel>::new())),
+                pin_dictionary: Arc::new(Mutex::new(HashMap::<usize, T>::new())),
+                sender,
+            }
+        }
+
+        // returns the pin level if pin with pin_id exists, concurrency save access
+        pub fn get_pin_level(&self, pin_id: usize) -> Option<PinLevel> {
+            match self
+                .pin_level_dictionary
+                .lock()
+                .expect("Lock error on locking the dictionary while getting a pin level")
+                .get(&pin_id)
+            {
+                None => None,
+                Some(pin_level) => Some(pin_level.clone()),
+            }
+        }
+
+        //NOTE: Maybe only allow to a remove a pin and return it instead of a reference (maybe
+        //reference useless....)
+        pub fn remove_pin(&self, pin_id: usize) -> Option<T> {
+            self.pin_dictionary
+                .lock()
+                .expect("Lock error on locking the dictionary while getting the pin")
+                .remove(&pin_id)
+        }
+
+        /// Registers the interrupt to the pins given in the implemented InterruptablePin trait
+        /** Uses the functions on_low_signal and on_high_signal from InterruptablePin to give the pin a
+         * reference to the sender which can then be used to send a PinChange::Rise or PinChange::Fall
+         *
+         * Return the old pin, if a pin was already registered
+         */
+        pub fn register_pin(&mut self, mut pin: T) -> Option<T> {
+            pin.register_signal(self.sender.clone());
+            info!("Registered pin_id: {}", pin.get_id());
+            self.set_pin(pin.get_id(), pin)
+        }
+
+        fn set_pin_level(&mut self, pin_id: usize, pin_level: PinLevel) -> Option<PinLevel> {
+            self.pin_level_dictionary
+                .lock()
+                .expect("Lock error on locking the dictionary while setting a pin level")
+                .insert(pin_id, pin_level)
+        }
+
+        fn set_pin(&mut self, pin_id: usize, pin: T) -> Option<T> {
+            self.pin_dictionary
+                .lock()
+                .expect("Lock error on lockig the dictionary while setting a pin")
+                .insert(pin_id, pin)
+        }
+    }
+
+    // struct for handeling the receiving thread of the pin library
+    pub struct PinHandle {
+        // receiver used in the thread and used to restart it
+        receiver: Arc<Mutex<Receiver<(usize, PinLevel)>>>,
+
+        // stop flag for the thread
+        stop: Arc<AtomicBool>,
+
+        // handle for the started thread
+        receive_thread_handle: JoinHandle<()>,
+
+        pin_level_dictionary: Arc<Mutex<HashMap<usize, PinLevel>>>,
+    }
+
+    impl PinHandle {
+        // creates an object and starts the thread
+        fn new(
+            pin_level_dictionary: Arc<Mutex<HashMap<usize, PinLevel>>>,
+            receiver: Arc<Mutex<Receiver<(usize, PinLevel)>>>,
+        ) -> Self {
+            let stop = Arc::new(AtomicBool::new(false));
+            let receive_thread_handle =
+                start_interupter_thread(pin_level_dictionary.clone(), stop.clone(), receiver.clone());
+
+            Self {
+                pin_level_dictionary,
+                receiver,
+                stop,
+                receive_thread_handle,
+            }
+        }
+
+        // sets the stop flag for savely stopping the thread
+        // NOTE: currently a bit useless because thread can block if no message is received!
+        pub fn stop_thread(&mut self) {
+            self.stop.store(true, Ordering::Relaxed);
+        }
+
+        // starts a thread which receives the via interrupt send messages and stores them in the
+        // dictionary
+        pub fn start_thread(
+            &mut self,
+            pin_dict: Arc<Mutex<HashMap<usize, PinLevel>>>,
+        ) -> thread::Result<bool> {
+            if self.receive_thread_handle.is_finished() {
+                // self.receive_thread_handle.join()?;
+                self.receive_thread_handle =
+                    start_interupter_thread(pin_dict, self.stop.clone(), self.receiver.clone());
+                Ok(true)
+            } else {
+                Ok(false)
+            }
+        }
+    }
+
+    // initialise the PinHandle used for the thread handle and the Pin registry library for
+    // getting the
+    pub fn init_handle<T: InterruptablePin>() -> (PinHandle, PinRegistry<T>) {
+        let (sender, receiver) = sync_channel(20);
+        let receiver = Arc::new(Mutex::new(receiver));
+        let pin_registry = PinRegistry::new(sender);
+        let pin_handle = PinHandle::new(pin_registry.pin_level_dictionary.clone(), receiver);
+        (pin_handle, pin_registry)
+    }
 } /* pin_handle */
+
+// ----------- Implementation for GPIO Pins -----------
 
 use log::info;
 use pin_handle::{InterruptablePin, PinLevel};
