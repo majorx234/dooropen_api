@@ -145,6 +145,20 @@ where
             let path = paths::GLOBAL_REGEX_SET.matches(uri.path());
 
             match method {
+                hyper::Method::OPTIONS => {
+                    let mut response = Response::new(Body::empty());
+                    response.headers_mut().insert(
+                        hyper::header::ACCESS_CONTROL_ALLOW_HEADERS,
+                        HeaderValue::from_static("*"),
+                    );
+                    response.headers_mut().insert(
+                        hyper::header::ACCESS_CONTROL_ALLOW_ORIGIN,
+                        HeaderValue::from_static("*"),
+                    );
+                    *response.status_mut() =
+                        StatusCode::from_u16(200).expect("Unable to turn 200 into a StatusCode");
+                    Ok(response)
+                }
                 // DoorStatus - GET /door_status
                 hyper::Method::GET if path.matched(paths::ID_DOOR_STATUS) => {
                     let result = api_impl.door_status(&context).await;
@@ -160,7 +174,10 @@ where
                         )
                         .expect("Unable to create X-Span-ID header value"),
                     );
-
+                    response.headers_mut().insert(
+                        hyper::header::ACCESS_CONTROL_ALLOW_ORIGIN,
+                        HeaderValue::from_static("*"),
+                    );
                     match result {
                         Ok(rsp) => match rsp {
                             DoorStatusResponse::Success(body) => {
@@ -212,7 +229,10 @@ where
                         )
                         .expect("Unable to create X-Span-ID header value"),
                     );
-
+                    response.headers_mut().insert(
+                        hyper::header::ACCESS_CONTROL_ALLOW_ORIGIN,
+                        HeaderValue::from_static("*"),
+                    );
                     match result {
                         Ok(rsp) => {
                             match rsp {

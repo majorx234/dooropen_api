@@ -1,9 +1,12 @@
 use crate::pin_handle::{init_handle, PinLevel, PinRegistry};
+use crate::server::PingResponse::Success;
 use async_trait::async_trait;
 use dooropen_api::models::Status;
+use hyper::header::ACCESS_CONTROL_ALLOW_ORIGIN;
 use hyper::server::conn::Http;
 use hyper::service::Service;
 use log::info;
+use openssl::ssl::SslStream;
 use rppal::gpio::{Gpio, InputPin};
 use std::marker::PhantomData;
 use swagger::auth::MakeAllowAllAuthenticator;
